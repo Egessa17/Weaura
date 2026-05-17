@@ -1,0 +1,29 @@
+# Dependencies
+node_modules/
+
+# Environment variables - NEVER push these
+.env
+.env.local
+.env.*
+
+# PocketBase database files - contains user data
+apps/pocketbase/pb_data/data.db
+apps/pocketbase/pb_data/data.db-wal
+apps/pocketbase/pb_data/data.db-shm
+apps/pocketbase/pb_data/auxiliary.db
+apps/pocketbase/pb_data/auxiliary.db-wal
+apps/pocketbase/pb_data/auxiliary.db-shm
+
+# PocketBase binary executable
+apps/pocketbase/pocketbase
+
+# Build output
+dist/
+build/
+
+# OS junk
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
