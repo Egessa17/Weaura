@@ -1,6 +1,5 @@
-
 import { useState, useEffect } from 'react';
-import pb from '@/lib/pocketbaseClient';
+import { supabase } from '@/lib/supabaseClient';
 
 export const useProducts = (filters = {}) => {
   const [products, setProducts] = useState([]);
@@ -8,45 +7,54 @@ export const useProducts = (filters = {}) => {
   const [error, setError] = useState(null);
   const [totalPages, setTotalPages] = useState(1);
 
-  const fetchProducts = async (page = 1, perPage = 12) => {
+  const fetchProducts = async (page = 1, perPage = 2) => {
     try {
       setLoading(true);
-      
-      let filterString = '';
-      const filterParts = [];
+
+      let query = supabase.from('products').select('*', { count: 'exact' });
 
       if (filters.category) {
-        filterParts.push(`category = "${filters.category}"`);
+        query = query.eq('category', filters.category);
       }
 
       if (filters.search) {
-        filterParts.push(`(name ~ "${filters.search}" || description ~ "${filters.search}")`);
+        query = query.or(
+          'name.ilike.%s{filters.search}%,decription.ilike.%{filters.search}%'
+        );
       }
 
-      if (filters.minPrice !== undefined || filters.maxPrice !== undefined) {
-        if (filters.minPrice !== undefined && filters.maxPrice !== undefined) {
-          filterParts.push(`price >= ${filters.minPrice} && price <= ${filters.maxPrice}`);
-        } else if (filters.minPrice !== undefined) {
-          filterParts.push(`price >= ${filters.minPrice}`);
-        } else {
-          filterParts.push(`price <= ${filters.maxPrice}`);
-        }
+      if (filters.minPrice !== undefined) {
+        query = query.gte('price', filters.minPrice);
+      }
+
+      if (filters.maxprice !== undefined) {
+        query = query.lte('price', filters.maxprice);
       }
 
       if (filters.minRating) {
-        filterParts.push(`rating >= ${filters.minRating}`);
+        query = query.gte('rating', filters.minRating);
       }
 
-      filterString = filterParts.join(' && ');
+      const sortMap = {
+        '-created': { column: 'created_at', ascending: false },
+        'created': { column: 'created_at', ascending: true },
+        '-price': { column: 'price', ascending: false },
+        'price': { column: 'price', ascending: true },
+        '-rating': { column: 'rating', ascending: false },
+      };
 
-      const result = await pb.collection('products').getList(page, perPage, {
-        filter: filterString || undefined,
-        sort: filters.sort || '-created',
-        $autoCancel: false
-      });
+      const sort = sortMap[filters.sort] || { column: 'created_at', ascending: false };
+      query = query.order(sort.column, { ascending: sort.ascending });
 
-      setProducts(result.items);
-      setTotalPages(result.totalPages);
+      const from = (page - 1) * perPage;
+      const to = from + perPage - 1;
+      query = query.range(from, to);
+
+      const { data, error: fetchError, count } = await query;
+      if (fetchError) throw fetchError;
+
+      setProducts(data || []);
+      setTotalPages(Math.ceil((count || 0) / perPage));
       setError(null);
     } catch (err) {
       setError(err.message);
@@ -58,11 +66,14 @@ export const useProducts = (filters = {}) => {
 
   const getProductById = async (id) => {
     try {
-      const product = await pb.collection('products').getOne(id, {
-        expand: 'reviews',
-        $autoCancel: false
-      });
-      return product;
+      const { data, error: fetchError } = await supabase
+        .from('products')
+        .select('*, reviews(*)')
+        .eq('id', id)
+        .single();
+
+      if (fetchError) throw fetchError;
+      return data;
     } catch (err) {
       console.error('Error fetching product:', err);
       throw err;
@@ -71,14 +82,14 @@ export const useProducts = (filters = {}) => {
 
   useEffect(() => {
     fetchProducts();
-  }, [filters.category, filters.search, filters.minPrice, filters.maxPrice, filters.minRating, filters.sort]);
+  }, [
+    filters.category,
+    filters.search,
+    filters.minPrice,
+    filters.maxPrice,
+    filters.minRating,
+    filters.sort,
+  ]);
 
-  return {
-    products,
-    loading,
-    error,
-    totalPages,
-    fetchProducts,
-    getProductById
-  };
+  return { products, loading, error, totalPages, fetchProducts, getProductById };
 };

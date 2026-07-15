@@ -1,139 +1,105 @@
-
 import { useState, useEffect } from 'react';
-import pb from '@/lib/pocketbaseClient';
+
+const CART_KEY = 'weaura_cart';
+
+const loadCart = () => {
+  try {
+    const stored = localStorage.getItem(CART_KEY);
+    return stored ? JSON.parse(stored) : [];
+  } catch {
+    return [];
+  }
+};
+
+const saveCart = (items) => {
+  try {
+    localStorage.setItem(CART_KEY, JSON.stringify(items));
+  } catch {
+    console.error('Failed to save cart');
+  }
+};
 
 export const useCart = () => {
-  const [cartItems, setCartItems] = useState([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState(null);
+  const [cartItems, setCartItems] = useState(loadCart);
 
-  const fetchCart = async () => {
-    if (!pb.authStore.isValid) {
-      setCartItems([]);
-      setLoading(false);
-      return;
-    }
+  //Persist to local storage whenever cart changes
+  useEffect(() => {
+    saveCart(cartItems);
+  }, [cartItems]);
 
-    try {
-      setLoading(true);
-      const items = await pb.collection('cart').getFullList({
-        filter: `user_id = "${pb.authStore.model.id}"`,
-        $autoCancel: false
-      });
-
-      const itemsWithProducts = await Promise.all(
-        items.map(async (item) => {
-          try {
-            const product = await pb.collection('products').getOne(item.product_id, { $autoCancel: false });
-            return { ...item, product };
-          } catch (err) {
-            console.error('Error fetching product:', err);
-            return item;
-          }
-        })
+  const addToCart = (product, quantity = 1, size = null, color = null) => {
+    setCartItems((prev) => {
+      const existing = prev.find(
+        (item) =>
+          item.product_id === product.id &&
+          item.size === size &&
+          item.color === color
       );
 
-      setCartItems(itemsWithProducts);
-      setError(null);
-    } catch (err) {
-      setError(err.message);
-      console.error('Error fetching cart:', err);
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  useEffect(() => {
-    fetchCart();
-  }, [pb.authStore.isValid]);
-
-  const addToCart = async (productId, quantity = 1, size = null, color = null) => {
-    if (!pb.authStore.isValid) {
-      throw new Error('Please log in to add items to cart');
-    }
-
-    try {
-      const existingItems = await pb.collection('cart').getFullList({
-        filter: `user_id = "${pb.authStore.model.id}" && product_id = "${productId}"`,
-        $autoCancel: false
-      });
-
-      if (existingItems.length > 0) {
-        const item = existingItems[0];
-        await pb.collection('cart').update(item.id, {
-          quantity: item.quantity + quantity
-        }, { $autoCancel: false });
-      } else {
-        await pb.collection('cart').create({
-          user_id: pb.authStore.model.id,
-          product_id: productId,
-          quantity,
-          size,
-          color
-        }, { $autoCancel: false });
+      if (existing) {
+        return prev.map((item) =>
+          item.product_id === product.id &&
+            item.size === size &&
+            item.color === color
+            ? { ...item, quantity: item.quantity + quantity }
+            : item
+        );
       }
 
-      await fetchCart();
-    } catch (err) {
-      setError(err.message);
-      throw err;
-    }
+      return [
+        ...prev,
+        {
+          id: '${product.id}-${size}-${color}-${Date.now()}',
+          product_id: product.id,
+          product,
+          quantity,
+          size,
+          color,
+        },
+      ];
+    });
   };
 
-  const updateQuantity = async (cartItemId, quantity) => {
-    try {
-      await pb.collection('cart').update(cartItemId, { quantity }, { $autoCancel: false });
-      await fetchCart();
-    } catch (err) {
-      setError(err.message);
-      throw err;
+  const updateQuantity = (cartItemId, quantity) => {
+    if (quantity <= 0) {
+      removeFromCart(cartItemId);
+      return;
     }
+    setCartItems((prev) =>
+      prev.map((item) =>
+        item.id === cartItemId ? {
+          ...item, quantity
+        } : item
+      )
+    );
   };
 
-  const removeFromCart = async (cartItemId) => {
-    try {
-      await pb.collection('cart').delete(cartItemId, { $autoCancel: false });
-      await fetchCart();
-    } catch (err) {
-      setError(err.message);
-      throw err;
-    }
+  const removeFromCart = (cartItemId) => {
+    setCartItems((prev) => prev.filter((item) => item.id !== cartItemId));
   };
 
-  const clearCart = async () => {
-    try {
-      const items = await pb.collection('cart').getFullList({
-        filter: `user_id = "${pb.authStore.model.id}"`,
-        $autoCancel: false
-      });
-
-      await Promise.all(items.map(item => 
-        pb.collection('cart').delete(item.id, { $autoCancel: false })
-      ));
-
-      setCartItems([]);
-    } catch (err) {
-      setError(err.message);
-      throw err;
-    }
+  const clearCart = () => {
+    setCartItems([]);
+    localStorage.removeItem(CART_KEY);
   };
 
-  const cartTotal = cartItems.reduce((total, item) => {
-    return total + (item.product?.price || 0) * item.quantity;
-  }, 0);
+  const cartTotal = cartItems.reduce(
+    (total, item) => total + (item.product?.price || 0) * item.quantity,
+    0
+  );
 
   const cartCount = cartItems.reduce((count, item) => count + item.quantity, 0);
 
   return {
     cartItems,
-    loading,
-    error,
+    cartTotal,
+    cartCount,
+    loading: false,
+    error: null,
     addToCart,
     updateQuantity,
     removeFromCart,
     clearCart,
-    fetchCart,
-    cartTotal,
-    cartCount
+    fetchCart: () => { }, //kept for API compatibility
   };
 };

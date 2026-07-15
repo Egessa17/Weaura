@@ -1,28 +1,21 @@
-
 import { useState, useEffect } from 'react';
-import pb from '@/lib/pocketbaseClient';
+import { supabase } from '@/lib/supabaseClient';
+import { sendStatusUpdate } from '@/lib/emailService';
 
 export const useOrders = () => {
   const [orders, setOrders] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
 
-  const fetchOrders = async () => {
-    if (!pb.authStore.isValid) {
-      setOrders([]);
-      setLoading(false);
-      return;
-    }
-
+  const fetchAllOrders = async () => {
     try {
       setLoading(true);
-      const userOrders = await pb.collection('orders').getFullList({
-        filter: `user_id = "${pb.authStore.model.id}"`,
-        sort: '-created',
-        $autoCancel: false
-      });
-
-      setOrders(userOrders);
+      const { data, error: fetchError } = await supabase
+        .from('orders')
+        .select('*')
+        .order('created_at', { ascending: false });
+      if (fetchError) throw fetchError;
+      setOrders(data || []);
       setError(null);
     } catch (err) {
       setError(err.message);
@@ -32,61 +25,23 @@ export const useOrders = () => {
     }
   };
 
-  const fetchAllOrders = async () => {
-    if (!pb.authStore.isValid || pb.authStore.model.role !== 'admin') {
-      return;
-    }
-
-    try {
-      setLoading(true);
-      const allOrders = await pb.collection('orders').getFullList({
-        sort: '-created',
-        $autoCancel: false
-      });
-
-      setOrders(allOrders);
-      setError(null);
-    } catch (err) {
-      setError(err.message);
-      console.error('Error fetching all orders:', err);
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const createOrder = async (items, totalAmount, paymentMethod, transactionId) => {
-    if (!pb.authStore.isValid) {
-      throw new Error('Please log in to place an order');
-    }
-
-    try {
-      const order = await pb.collection('orders').create({
-        user_id: pb.authStore.model.id,
-        items: items,
-        total_amount: totalAmount,
-        payment_method: paymentMethod,
-        transaction_id: transactionId,
-        order_status: 'Pending'
-      }, { $autoCancel: false });
-
-      await fetchOrders();
-      return order;
-    } catch (err) {
-      setError(err.message);
-      throw err;
-    }
-  };
-
   const updateOrderStatus = async (orderId, status) => {
     try {
-      await pb.collection('orders').update(orderId, {
-        order_status: status
-      }, { $autoCancel: false });
+      const { error: updateError } = await supabase
+        .from('orders')
+        .update({ order_status: status })
+        .eq('id', orderId);
+      if (updateError) throw updateError;
 
-      if (pb.authStore.model.role === 'admin') {
-        await fetchAllOrders();
-      } else {
-        await fetchOrders();
+      // Update local state immediately
+      setOrders((prev) =>
+        prev.map((o) => (o.id === orderId ? { ...o, order_status: status } : o))
+      );
+
+      // Send status update email to customer — non-blocking
+      const updatedOrder = orders.find((o) => o.id === orderId);
+      if (updatedOrder) {
+        sendStatusUpdate({ ...updatedOrder, order_status: status }, status);
       }
     } catch (err) {
       setError(err.message);
@@ -94,17 +49,41 @@ export const useOrders = () => {
     }
   };
 
+  const updateAdminNotes = async (orderId, notes) => {
+    try {
+      const { error: updateError } = await supabase
+        .from('orders')
+        .update({ admin_notes: notes })
+        .eq('id', orderId);
+      if (updateError) throw updateError;
+      setOrders((prev) =>
+        prev.map((o) => (o.id === orderId ? { ...o, admin_notes: notes } : o))
+      );
+    } catch (err) {
+      setError(err.message);
+      throw err;
+    }
+  };
+
   useEffect(() => {
-    fetchOrders();
-  }, [pb.authStore.isValid]);
+    fetchAllOrders();
+  }, []);
+
+  const stats = {
+    totalRevenue:    orders.reduce((sum, o) => sum + (o.total_amount || 0), 0),
+    totalOrders:     orders.length,
+    pendingOrders:   orders.filter((o) => o.order_status === 'Pending').length,
+    deliveredOrders: orders.filter((o) => o.order_status === 'Delivered').length,
+  };
 
   return {
     orders,
     loading,
     error,
-    fetchOrders,
+    stats,
     fetchAllOrders,
-    createOrder,
-    updateOrderStatus
+    fetchOrders: fetchAllOrders,
+    updateOrderStatus,
+    updateAdminNotes,
   };
 };

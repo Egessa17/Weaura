@@ -1,92 +1,114 @@
-
 import React, { useState, useEffect } from 'react';
 import { Helmet } from 'react-helmet';
 import { useNavigate } from 'react-router-dom';
 import Header from '@/components/Header.jsx';
 import Footer from '@/components/Footer.jsx';
-import BreadcrumbNav from '@/components/BreadcrumbNav.jsx';
-import PaymentMethodCard from '@/components/PaymentMethodCard.jsx';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { useCart } from '@/hooks/useCart';
-import { useOrders } from '@/hooks/useOrders';
+import { supabase } from '@/lib/supabaseClient';
+import { sendOrderReceipt } from '@/lib/emailService';
 import { toast } from 'sonner';
 
 const CheckoutPage = () => {
   const { cartItems, cartTotal, clearCart, loading } = useCart();
-  const { createOrder } = useOrders();
   const navigate = useNavigate();
+
+  const [details, setDetails] = useState({
+    name: '',
+    phone: '',
+    email: '',
+    address: '',
+    deliveryZone: '',
+  });
+
   const [paymentMethod, setPaymentMethod] = useState('');
   const [transactionId, setTransactionId] = useState('');
   const [isProcessing, setIsProcessing] = useState(false);
 
   useEffect(() => {
-    // Prevent redirecting while the cart is still loading its initial state
     if (!loading && cartItems.length === 0) {
-      console.log('Cart is empty, redirecting to /cart');
       navigate('/cart');
     }
   }, [cartItems.length, loading, navigate]);
 
-  const handlePlaceOrder = async () => {
-    if (!paymentMethod) {
-      toast.error('Please select a payment method');
-      return;
-    }
+  const handleChange = (field) => (e) =>
+    setDetails((prev) => ({ ...prev, [field]: e.target.value }));
 
-    if (!transactionId.trim()) {
-      toast.error('Please enter your transaction ID');
-      return;
-    }
+  const handlePlaceOrder = async () => {
+    if (!details.name.trim())    return toast.error('Please enter your full name');
+    if (!details.phone.trim())   return toast.error('Please enter your phone number');
+    if (!details.address.trim()) return toast.error('Please enter your delivery address');
+    if (!paymentMethod)          return toast.error('Please select a payment method');
+    if (!transactionId.trim())   return toast.error('Please enter your transaction ID');
 
     setIsProcessing(true);
+
     try {
-      const orderItems = cartItems.map(item => ({
-        product_id: item.product_id,
+      const orderItems = cartItems.map((item) => ({
+        product_id:   item.product_id,
         product_name: item.product?.name,
-        quantity: item.quantity,
-        price: item.product?.price,
-        size: item.size,
-        color: item.color
+        quantity:     item.quantity,
+        price:        item.product?.price,
+        size:         item.size,
+        color:        item.color,
       }));
 
-      await createOrder(orderItems, cartTotal, paymentMethod, transactionId);
-      await clearCart();
-      
-      toast.success('Order placed successfully');
-      navigate('/dashboard', { state: { orderPlaced: true } });
+      const { data: order, error } = await supabase
+        .from('orders')
+        .insert({
+          customer_name:    details.name,
+          customer_phone:   details.phone,
+          customer_email:   details.email   || null,
+          customer_address: details.address,
+          delivery_zone:    details.deliveryZone || null,
+          items:            orderItems,
+          total_amount:     cartTotal,
+          payment_method:   paymentMethod,
+          transaction_id:   transactionId,
+          order_status:     'Pending',
+        })
+        .select()
+        .single();
+
+      if (error) throw error;
+
+      // Send receipt email — non-blocking, runs in background
+      sendOrderReceipt(order);
+
+      clearCart();
+      toast.success('Order placed! We will contact you shortly.');
+      navigate('/order-confirmed', {
+        state: {
+          name:    details.name,
+          phone:   details.phone,
+          orderId: order.id,
+        },
+      });
     } catch (error) {
-      toast.error(error.message || 'Failed to place order');
+      toast.error(error.message || 'Failed to place order. Please try again.');
     } finally {
       setIsProcessing(false);
     }
   };
 
-  if (loading) {
-    return (
-      <>
-        <Header />
-        <div className="min-h-screen flex items-center justify-center">
-          <div className="text-center">
-            <div className="w-16 h-16 border-4 border-primary border-t-transparent rounded-full animate-spin mx-auto mb-4"></div>
-            <p className="text-muted-foreground">Loading checkout...</p>
-          </div>
-        </div>
-        <Footer />
-      </>
-    );
-  }
+  const paymentOptions = ['MTN MoMo', 'Airtel Money'];
 
-  if (cartItems.length === 0) {
-    return null; // Will redirect via useEffect
-  }
+  const canSubmit =
+    !isProcessing &&
+    details.name.trim() &&
+    details.phone.trim() &&
+    details.address.trim() &&
+    paymentMethod &&
+    transactionId.trim();
+
+  if (loading || cartItems.length === 0) return null;
 
   return (
     <>
       <Helmet>
         <title>Checkout - Weaura</title>
-        <meta name="description" content="Complete your purchase securely at Weaura with MTN MoMo or Airtel Money." />
       </Helmet>
 
       <div className="min-h-screen flex flex-col">
@@ -94,51 +116,137 @@ const CheckoutPage = () => {
 
         <main className="flex-1 py-8">
           <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-            <BreadcrumbNav items={[{ label: 'Cart', href: '/cart' }, { label: 'Checkout' }]} />
-
-            <h1 className="text-4xl md:text-5xl font-bold mb-8" style={{ letterSpacing: '-0.02em', textWrap: 'balance' }}>
+            <h1 className="text-4xl md:text-5xl font-bold mb-8" style={{ letterSpacing: '-0.02em' }}>
               Checkout
             </h1>
 
             <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
               <div className="lg:col-span-2 space-y-8">
-                <section className="bg-card rounded-2xl p-6 shadow-sm border border-border">
-                  <h2 className="text-2xl font-semibold mb-6">Payment method</h2>
-                  <div className="space-y-4">
-                    <PaymentMethodCard
-                      method="MTN MoMo"
-                      selected={paymentMethod === 'MTN MoMo'}
-                      onSelect={setPaymentMethod}
-                    />
-                    <PaymentMethodCard
-                      method="Airtel Money"
-                      selected={paymentMethod === 'Airtel Money'}
-                      onSelect={setPaymentMethod}
-                    />
-                  </div>
-                </section>
 
+                {/* Customer details */}
                 <section className="bg-card rounded-2xl p-6 shadow-sm border border-border">
-                  <h2 className="text-2xl font-semibold mb-6">Transaction details</h2>
+                  <h2 className="text-2xl font-semibold mb-6">Your details</h2>
                   <div className="space-y-4">
+
                     <div>
-                      <Label htmlFor="transactionId">Transaction ID</Label>
+                      <Label htmlFor="name">Full name *</Label>
                       <Input
-                        id="transactionId"
+                        id="name"
                         type="text"
-                        placeholder="Enter your transaction ID"
-                        value={transactionId}
-                        onChange={(e) => setTransactionId(e.target.value)}
-                        className="mt-2 bg-background text-foreground placeholder:text-muted-foreground"
+                        placeholder="John Doe"
+                        value={details.name}
+                        onChange={handleChange('name')}
+                        className="mt-2 bg-background"
+                        required
                       />
-                      <p className="text-sm text-muted-foreground mt-2">
-                        After completing the payment, enter the transaction ID you received
+                    </div>
+
+                    <div>
+                      <Label htmlFor="phone">Phone number *</Label>
+                      <Input
+                        id="phone"
+                        type="tel"
+                        placeholder="07XX XXX XXX"
+                        value={details.phone}
+                        onChange={handleChange('phone')}
+                        className="mt-2 bg-background"
+                        required
+                      />
+                      <p className="text-xs text-muted-foreground mt-1">
+                        We will call this number to confirm your order
                       </p>
+                    </div>
+
+                    <div>
+                      <Label htmlFor="email">
+                        Email{' '}
+                        <span className="text-muted-foreground font-normal">
+                          (optional — for order receipt)
+                        </span>
+                      </Label>
+                      <Input
+                        id="email"
+                        type="email"
+                        placeholder="you@example.com"
+                        value={details.email}
+                        onChange={handleChange('email')}
+                        className="mt-2 bg-background"
+                      />
+                    </div>
+
+                    <div>
+                      <Label htmlFor="address">Delivery address *</Label>
+                      <Input
+                        id="address"
+                        type="text"
+                        placeholder="e.g. Ntinda, Kampala — near the Shell station"
+                        value={details.address}
+                        onChange={handleChange('address')}
+                        className="mt-2 bg-background"
+                        required
+                      />
+                    </div>
+
+                    <div>
+                      <Label htmlFor="zone">
+                        Delivery zone{' '}
+                        <span className="text-muted-foreground font-normal">(optional)</span>
+                      </Label>
+                      <Input
+                        id="zone"
+                        type="text"
+                        placeholder="e.g. Kampala Central, Wakiso, Entebbe"
+                        value={details.deliveryZone}
+                        onChange={handleChange('deliveryZone')}
+                        className="mt-2 bg-background"
+                      />
                     </div>
                   </div>
                 </section>
+
+                {/* Payment method */}
+                <section className="bg-card rounded-2xl p-6 shadow-sm border border-border">
+                  <h2 className="text-2xl font-semibold mb-6">Payment method</h2>
+                  <div className="space-y-3">
+                    {paymentOptions.map((method) => (
+                      <button
+                        key={method}
+                        type="button"
+                        onClick={() => setPaymentMethod(method)}
+                        className={`w-full text-left p-4 rounded-xl border-2 transition-colors ${
+                          paymentMethod === method
+                            ? 'border-primary bg-primary/5'
+                            : 'border-border hover:border-primary/50'
+                        }`}
+                      >
+                        <span className="font-medium">{method}</span>
+                      </button>
+                    ))}
+                  </div>
+                </section>
+
+                {/* Transaction ID */}
+                <section className="bg-card rounded-2xl p-6 shadow-sm border border-border">
+                  <h2 className="text-2xl font-semibold mb-2">Transaction ID</h2>
+                  <p className="text-sm text-muted-foreground mb-4">
+                    Send payment to our MoMo number first, then paste the transaction ID from your SMS confirmation here.
+                  </p>
+                  <div>
+                    <Label htmlFor="transactionId">MoMo transaction ID *</Label>
+                    <Input
+                      id="transactionId"
+                      type="text"
+                      placeholder="e.g. MP250611.1234.A56789"
+                      value={transactionId}
+                      onChange={(e) => setTransactionId(e.target.value)}
+                      className="mt-2 bg-background font-mono"
+                    />
+                  </div>
+                </section>
+
               </div>
 
+              {/* Order summary — shows product total only, no transport line */}
               <div className="lg:col-span-1">
                 <div className="bg-card rounded-2xl p-6 shadow-sm border border-border sticky top-24">
                   <h2 className="text-xl font-semibold mb-6">Order summary</h2>
@@ -146,48 +254,42 @@ const CheckoutPage = () => {
                   <div className="space-y-4 mb-6">
                     {cartItems.map((item) => (
                       <div key={item.id} className="flex justify-between text-sm">
-                        <div className="flex-1">
+                        <div className="flex-1 pr-2">
                           <p className="font-medium">{item.product?.name}</p>
-                          <p className="text-muted-foreground">Qty: {item.quantity}</p>
+                          <p className="text-muted-foreground text-xs mt-0.5">
+                            Qty: {item.quantity}
+                            {item.size && ` · ${item.size}`}
+                            {item.color && ` · ${item.color}`}
+                          </p>
                         </div>
-                        <span className="font-medium">
-                          ${((item.product?.price || 0) * item.quantity).toFixed(2)}
+                        <span className="font-medium whitespace-nowrap">
+                          UGX {((item.product?.price || 0) * item.quantity).toLocaleString()}
                         </span>
                       </div>
                     ))}
                   </div>
 
-                  <div className="space-y-3 mb-6 pt-6 border-t border-border">
-                    <div className="flex justify-between text-sm">
-                      <span className="text-muted-foreground">Subtotal</span>
-                      <span className="font-medium">${cartTotal.toFixed(2)}</span>
-                    </div>
-                    <div className="flex justify-between text-sm">
-                      <span className="text-muted-foreground">Shipping</span>
-                      <span className="font-medium">Free</span>
-                    </div>
-                    <div className="flex justify-between text-sm">
-                      <span className="text-muted-foreground">Tax</span>
-                      <span className="font-medium">$0.00</span>
-                    </div>
-                  </div>
-
-                  <div className="pt-6 border-t border-border mb-6">
+                  {/* Total — product price only, no transport breakdown */}
+                  <div className="pt-4 border-t border-border mb-6">
                     <div className="flex justify-between items-baseline">
                       <span className="text-lg font-semibold">Total</span>
                       <span className="text-3xl font-bold text-primary">
-                        ${cartTotal.toFixed(2)}
+                        UGX {cartTotal.toLocaleString()}
                       </span>
                     </div>
                   </div>
 
                   <Button
                     onClick={handlePlaceOrder}
-                    disabled={isProcessing || !paymentMethod || !transactionId.trim()}
+                    disabled={!canSubmit}
                     className="w-full bg-primary hover:bg-primary/90 text-primary-foreground py-6 text-lg"
                   >
-                    {isProcessing ? 'Processing...' : 'Place Order'}
+                    {isProcessing ? 'Placing order...' : 'Place order'}
                   </Button>
+
+                  <p className="text-xs text-muted-foreground text-center mt-4">
+                    We will call you to confirm before dispatching
+                  </p>
                 </div>
               </div>
             </div>

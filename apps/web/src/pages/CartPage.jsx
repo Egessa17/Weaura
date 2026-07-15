@@ -1,4 +1,3 @@
-
 import React from 'react';
 import { Helmet } from 'react-helmet';
 import { Link, useNavigate } from 'react-router-dom';
@@ -8,41 +7,32 @@ import Footer from '@/components/Footer.jsx';
 import BreadcrumbNav from '@/components/BreadcrumbNav.jsx';
 import { Button } from '@/components/ui/button';
 import { useCart } from '@/hooks/useCart';
-import { useAuthContext } from '@/contexts/AuthContext.jsx';
 import { toast } from 'sonner';
-import pb from '@/lib/pocketbaseClient';
 
 const CartPage = () => {
   const { cartItems, loading, updateQuantity, removeFromCart, cartTotal } = useCart();
-  const { currentUser } = useAuthContext();
   const navigate = useNavigate();
 
-  const handleUpdateQuantity = async (itemId, newQuantity) => {
+  const handleUpdateQuantity = (itemId, newQuantity) => {
     if (newQuantity < 1) return;
     try {
-      await updateQuantity(itemId, newQuantity);
+      updateQuantity(itemId, newQuantity);
     } catch (error) {
       toast.error('Failed to update quantity');
     }
   };
 
-  const handleRemove = async (itemId) => {
+  const handleRemove = (itemId) => {
     try {
-      await removeFromCart(itemId);
+      removeFromCart(itemId);
       toast.success('Item removed from cart');
     } catch (error) {
       toast.error('Failed to remove item');
     }
   };
 
+  // No auth check — anyone can proceed to checkout
   const handleCheckout = () => {
-    console.log('Proceed to checkout clicked. Auth valid:', pb.authStore.isValid);
-    if (!pb.authStore.isValid) {
-      toast.error('Please log in to checkout');
-      navigate('/login');
-      return;
-    }
-    console.log('Navigating to /checkout');
     navigate('/checkout');
   };
 
@@ -103,7 +93,7 @@ const CartPage = () => {
                         <div className="w-32 h-32 rounded-xl overflow-hidden bg-muted flex-shrink-0">
                           {item.product?.images && item.product.images.length > 0 ? (
                             <img
-                              src={pb.files.getUrl(item.product, item.product.images[0])}
+                              src={item.product.images[0]}
                               alt={item.product.name}
                               className="w-full h-full object-cover"
                             />
@@ -163,7 +153,7 @@ const CartPage = () => {
                             </div>
 
                             <span className="text-2xl font-bold text-primary">
-                              ${((item.product?.price || 0) * item.quantity).toFixed(2)}
+                              UGX {((item.product?.price || 0) * item.quantity).toLocaleString()}
                             </span>
                           </div>
                         </div>
@@ -179,15 +169,11 @@ const CartPage = () => {
                     <div className="space-y-4 mb-6">
                       <div className="flex justify-between text-sm">
                         <span className="text-muted-foreground">Subtotal</span>
-                        <span className="font-medium">${cartTotal.toFixed(2)}</span>
+                        <span className="font-medium">UGX {cartTotal.toLocaleString()}</span>
                       </div>
                       <div className="flex justify-between text-sm">
-                        <span className="text-muted-foreground">Shipping</span>
-                        <span className="font-medium">Free</span>
-                      </div>
-                      <div className="flex justify-between text-sm">
-                        <span className="text-muted-foreground">Tax</span>
-                        <span className="font-medium">$0.00</span>
+                        <span className="text-muted-foreground">Delivery</span>
+                        <span className="font-medium text-green-600">Included</span>
                       </div>
                     </div>
 
@@ -195,7 +181,7 @@ const CartPage = () => {
                       <div className="flex justify-between items-baseline">
                         <span className="text-lg font-semibold">Total</span>
                         <span className="text-3xl font-bold text-primary">
-                          ${cartTotal.toFixed(2)}
+                          UGX {cartTotal.toLocaleString()}
                         </span>
                       </div>
                     </div>

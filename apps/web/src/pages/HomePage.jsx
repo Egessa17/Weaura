@@ -1,4 +1,3 @@
-
 import React, { useEffect, useState } from 'react';
 import { Helmet } from 'react-helmet';
 import { Link } from 'react-router-dom';
@@ -8,7 +7,7 @@ import Header from '@/components/Header.jsx';
 import Footer from '@/components/Footer.jsx';
 import ProductCard from '@/components/ProductCard.jsx';
 import { motion } from 'framer-motion';
-import pb from '@/lib/pocketbaseClient';
+import { supabase } from '@/lib/supabaseClient';
 
 const HomePage = () => {
   const [featuredProducts, setFeaturedProducts] = useState([]);
@@ -17,11 +16,14 @@ const HomePage = () => {
   useEffect(() => {
     const fetchFeaturedProducts = async () => {
       try {
-        const products = await pb.collection('products').getList(1, 6, {
-          sort: '-rating',
-          $autoCancel: false
-        });
-        setFeaturedProducts(products.items);
+        const { data, error } = await supabase
+          .from('products')
+          .select('*')
+          .order('rating', { ascending: false })
+          .limit(6);
+
+        if (error) throw error;
+        setFeaturedProducts(data || []);
       } catch (error) {
         console.error('Error fetching featured products:', error);
       } finally {

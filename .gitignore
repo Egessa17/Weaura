@@ -16,6 +16,7 @@ apps/pocketbase/pb_data/auxiliary.db-shm
 
 # PocketBase binary executable
 apps/pocketbase/pocketbase
+apps/pocketbase/pocketbase.exe
 
 # Build output
 dist/

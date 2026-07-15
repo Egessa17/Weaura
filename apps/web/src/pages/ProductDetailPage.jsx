@@ -12,7 +12,7 @@ import { Button } from '@/components/ui/button';
 import { useCart } from '@/hooks/useCart';
 import { useWishlist } from '@/hooks/useWishlist';
 import { toast } from 'sonner';
-import pb from '@/lib/pocketbaseClient';
+import supabase from '@/lib/supabaseClient';
 
 const ProductDetailPage = () => {
   const { id } = useParams();
@@ -160,9 +160,8 @@ const ProductDetailPage = () => {
                       <button
                         key={index}
                         onClick={() => setSelectedImage(index)}
-                        className={`aspect-square rounded-lg overflow-hidden border-2 transition-all duration-200 ${
-                          selectedImage === index ? 'border-primary' : 'border-transparent'
-                        }`}
+                        className={`aspect-square rounded-lg overflow-hidden border-2 transition-all duration-200 ${selectedImage === index ? 'border-primary' : 'border-transparent'
+                          }`}
                       >
                         <img src={img} alt={`${product.name} ${index + 1}`} className="w-full h-full object-cover" />
                       </button>
@@ -188,9 +187,8 @@ const ProductDetailPage = () => {
                       {[...Array(5)].map((_, i) => (
                         <Star
                           key={i}
-                          className={`w-5 h-5 ${
-                            i < Math.floor(product.rating) ? 'fill-primary text-primary' : 'text-muted-foreground'
-                          }`}
+                          className={`w-5 h-5 ${i < Math.floor(product.rating) ? 'fill-primary text-primary' : 'text-muted-foreground'
+                            }`}
                         />
                       ))}
                     </div>
@@ -226,11 +224,10 @@ const ProductDetailPage = () => {
                         <button
                           key={size}
                           onClick={() => setSelectedSize(size)}
-                          className={`px-6 py-3 border-2 rounded-lg font-medium transition-all duration-200 ${
-                            selectedSize === size
-                              ? 'border-primary bg-primary text-primary-foreground'
-                              : 'border-border hover:border-primary'
-                          }`}
+                          className={`px-6 py-3 border-2 rounded-lg font-medium transition-all duration-200 ${selectedSize === size
+                            ? 'border-primary bg-primary text-primary-foreground'
+                            : 'border-border hover:border-primary'
+                            }`}
                         >
                           {size}
                         </button>
@@ -247,11 +244,10 @@ const ProductDetailPage = () => {
                         <button
                           key={color}
                           onClick={() => setSelectedColor(color)}
-                          className={`px-6 py-3 border-2 rounded-lg font-medium transition-all duration-200 ${
-                            selectedColor === color
-                              ? 'border-primary bg-primary text-primary-foreground'
-                              : 'border-border hover:border-primary'
-                          }`}
+                          className={`px-6 py-3 border-2 rounded-lg font-medium transition-all duration-200 ${selectedColor === color
+                            ? 'border-primary bg-primary text-primary-foreground'
+                            : 'border-border hover:border-primary'
+                            }`}
                         >
                           {color}
                         </button>
@@ -299,9 +295,8 @@ const ProductDetailPage = () => {
                     className="px-6 py-6"
                   >
                     <Heart
-                      className={`w-5 h-5 ${
-                        isInWishlist(product.id) ? 'fill-primary text-primary' : ''
-                      }`}
+                      className={`w-5 h-5 ${isInWishlist(product.id) ? 'fill-primary text-primary' : ''
+                        }`}
                     />
                   </Button>
                 </div>

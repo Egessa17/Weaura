@@ -1,14 +1,19 @@
-
 import { useState, useEffect } from 'react';
-import pb from '@/lib/pocketbaseClient';
+import { supabase } from '@/lib/supabaseClient';
 
 export const useWishlist = () => {
   const [wishlistItems, setWishlistItems] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
 
+  const getCurrentUserId = async () => {
+    const { data: { session } } = await supabase.auth.getSession();
+    return session?.user?.id || null;
+  };
+
   const fetchWishlist = async () => {
-    if (!pb.authStore.isValid) {
+    const userId = await getCurrentUserId();
+    if (!userId) {
       setWishlistItems([]);
       setLoading(false);
       return;
@@ -16,24 +21,12 @@ export const useWishlist = () => {
 
     try {
       setLoading(true);
-      const items = await pb.collection('wishlist').getFullList({
-        filter: `user_id = "${pb.authStore.model.id}"`,
-        $autoCancel: false
-      });
-
-      const itemsWithProducts = await Promise.all(
-        items.map(async (item) => {
-          try {
-            const product = await pb.collection('products').getOne(item.product_id, { $autoCancel: false });
-            return { ...item, product };
-          } catch (err) {
-            console.error('Error fetching product:', err);
-            return item;
-          }
-        })
-      );
-
-      setWishlistItems(itemsWithProducts);
+      const { data, error: fetchError } = await supabase
+        .from('wishlist')
+        .select('*, product:products(*)')
+        .eq('user_id', userId);
+      if (fetchError) throw fetchError;
+      setWishlistItems(data || []);
       setError(null);
     } catch (err) {
       setError(err.message);
@@ -45,24 +38,29 @@ export const useWishlist = () => {
 
   useEffect(() => {
     fetchWishlist();
-  }, [pb.authStore.isValid]);
+    const { data: { subscription } } = supabase.auth.onAuthStateChange(() => {
+      fetchWishlist();
+    });
+    return () => subscription.unsubscribe();
+  }, []);
 
   const addToWishlist = async (productId) => {
-    if (!pb.authStore.isValid) {
-      throw new Error('Please log in to add items to wishlist');
-    }
+    const userId = await getCurrentUserId();
+    if (!userId) throw new Error('Please log in to add items to wishlist');
 
     try {
-      const existing = await pb.collection('wishlist').getFullList({
-        filter: `user_id = "${pb.authStore.model.id}" && product_id = "${productId}"`,
-        $autoCancel: false
-      });
+      const { data: existing } = await supabase
+        .from('wishlist')
+        .select('id')
+        .eq('user_id', userId)
+        .eq('product_id', productId)
+        .single();
 
-      if (existing.length === 0) {
-        await pb.collection('wishlist').create({
-          user_id: pb.authStore.model.id,
-          product_id: productId
-        }, { $autoCancel: false });
+      if (!existing) {
+        const { error: insertError } = await supabase
+          .from('wishlist')
+          .insert({ user_id: userId, product_id: productId });
+        if (insertError) throw insertError;
         await fetchWishlist();
       }
     } catch (err) {
@@ -73,7 +71,11 @@ export const useWishlist = () => {
 
   const removeFromWishlist = async (wishlistItemId) => {
     try {
-      await pb.collection('wishlist').delete(wishlistItemId, { $autoCancel: false });
+      const { error: deleteError } = await supabase
+        .from('wishlist')
+        .delete()
+        .eq('id', wishlistItemId);
+      if (deleteError) throw deleteError;
       await fetchWishlist();
     } catch (err) {
       setError(err.message);
@@ -81,14 +83,11 @@ export const useWishlist = () => {
     }
   };
 
-  const isInWishlist = (productId) => {
-    return wishlistItems.some(item => item.product_id === productId);
-  };
+  const isInWishlist = (productId) =>
+    wishlistItems.some((item) => item.product_id === productId);
 
-  const getWishlistItemId = (productId) => {
-    const item = wishlistItems.find(item => item.product_id === productId);
-    return item?.id;
-  };
+  const getWishlistItemId = (productId) =>
+    wishlistItems.find((item) => item.product_id === productId)?.id;
 
   return {
     wishlistItems,
@@ -98,6 +97,6 @@ export const useWishlist = () => {
     removeFromWishlist,
     fetchWishlist,
     isInWishlist,
-    getWishlistItemId
+    getWishlistItemId,
   };
 };
