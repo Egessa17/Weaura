@@ -12,7 +12,7 @@ export const useOrders = () => {
       setLoading(true);
       const { data, error: fetchError } = await supabase
         .from('orders')
-        .select('*')
+        .select('*, status_admin:users!orders_status_updated_by_fkey(name)')
         .order('created_at', { ascending: false });
       if (fetchError) throw fetchError;
       setOrders(data || []);
@@ -47,6 +47,21 @@ export const useOrders = () => {
       setError(err.message);
       throw err;
     }
+  };
+
+  const verifyPayment = async (orderId, paymentMethod, transactionId) => {
+    const normalizedTransactionId = transactionId.replace(/\s+/g, '');
+    const { data, error: verifyError } = await supabase.functions.invoke('verify-payment', {
+      body: {
+        order_id: orderId,
+        payment_method: paymentMethod,
+        transaction_id: normalizedTransactionId,
+      },
+    });
+    if (verifyError) throw verifyError;
+    if (!data?.order) throw new Error('Payment verification did not return an order');
+    setOrders((prev) => prev.map((order) => (order.id === orderId ? data.order : order)));
+    return data;
   };
 
   const updateAdminNotes = async (orderId, notes) => {
@@ -84,6 +99,7 @@ export const useOrders = () => {
     fetchAllOrders,
     fetchOrders: fetchAllOrders,
     updateOrderStatus,
+    verifyPayment,
     updateAdminNotes,
   };
 };

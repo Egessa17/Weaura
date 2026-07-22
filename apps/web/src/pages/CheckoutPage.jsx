@@ -8,7 +8,6 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { useCart } from '@/hooks/useCart';
 import { supabase } from '@/lib/supabaseClient';
-import { sendOrderReceipt } from '@/lib/emailService';
 import { toast } from 'sonner';
 
 const CheckoutPage = () => {
@@ -43,42 +42,55 @@ const CheckoutPage = () => {
     if (!paymentMethod)          return toast.error('Please select a payment method');
     if (!transactionId.trim())   return toast.error('Please enter your transaction ID');
 
+    const itemMissingOptions = cartItems.some((item) =>
+      ((item.product?.sizes?.length || 0) > 0 && !item.size)
+      || ((item.product?.colors?.length || 0) > 0 && !item.color)
+    );
+    if (itemMissingOptions) {
+      return toast.error('Please select size and color too to continue to place the order');
+    }
+
+    const normalizedTransactionId = transactionId.replace(/\s+/g, '');
+    const requiredLength = paymentMethod === 'MTN MoMo' ? 11 : 12;
+    if (!new RegExp(`^\\d{${requiredLength}}$`).test(normalizedTransactionId)) {
+      return toast.error(`${paymentMethod} transaction IDs must contain exactly ${requiredLength} digits`);
+    }
+
     setIsProcessing(true);
 
     try {
       const orderItems = cartItems.map((item) => ({
         product_id:   item.product_id,
-        product_name: item.product?.name,
         quantity:     item.quantity,
-        price:        item.product?.price,
         size:         item.size,
         color:        item.color,
       }));
 
-      const { data: order, error } = await supabase
-        .from('orders')
-        .insert({
+      const { data, error } = await supabase.functions.invoke('create-order', {
+        body: {
           customer_name:    details.name,
           customer_phone:   details.phone,
           customer_email:   details.email   || null,
           customer_address: details.address,
           delivery_zone:    details.deliveryZone || null,
           items:            orderItems,
-          total_amount:     cartTotal,
           payment_method:   paymentMethod,
-          transaction_id:   transactionId,
-          order_status:     'Pending',
-        })
-        .select()
-        .single();
+          transaction_id:   normalizedTransactionId,
+        },
+      });
 
-      if (error) throw error;
-
-      // Send receipt email — non-blocking, runs in background
-      sendOrderReceipt(order);
+      if (error) {
+        if (error.context instanceof Response) {
+          const responseBody = await error.context.json().catch(() => null);
+          throw new Error(responseBody?.error || error.message);
+        }
+        throw error;
+      }
+      const order = data?.order;
+      if (!order?.id) throw new Error('Order was not created');
 
       clearCart();
-      toast.success('Order placed! We will contact you shortly.');
+      toast.success('Order submitted and awaiting payment verification.');
       navigate('/order-confirmed', {
         state: {
           name:    details.name,

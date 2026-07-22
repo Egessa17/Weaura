@@ -10,9 +10,10 @@ const STATUS_OPTIONS = [
   'Cancelled',
 ];
 
-const OrderCard = ({ order, onStatusChange, isAdmin = false }) => {
+const OrderCard = ({ order, onStatusChange, onVerifyPayment, isAdmin = false }) => {
   const [expanded, setExpanded] = useState(false);
   const [updating, setUpdating] = useState(false);
+  const [verificationId, setVerificationId] = useState('');
 
   const formatDate = (dateString) => {
     if (!dateString) return 'Unknown date';
@@ -61,6 +62,19 @@ const OrderCard = ({ order, onStatusChange, isAdmin = false }) => {
     }
   };
 
+  const handleVerifyPayment = async () => {
+    const normalized = verificationId.replace(/\s+/g, '');
+    const requiredLength = order.payment_method === 'MTN MoMo' ? 11 : 12;
+    if (!new RegExp(`^\\d{${requiredLength}}$`).test(normalized)) return;
+    setUpdating(true);
+    try {
+      await onVerifyPayment(order.id, order.payment_method, normalized);
+      setVerificationId('');
+    } finally {
+      setUpdating(false);
+    }
+  };
+
   return (
     <div className="bg-card rounded-xl border border-border shadow-sm hover:shadow-md transition-all duration-200 overflow-hidden">
       {/* Header */}
@@ -95,6 +109,18 @@ const OrderCard = ({ order, onStatusChange, isAdmin = false }) => {
             <span className="text-muted-foreground">Payment:</span>
             <span className="font-medium">{order.payment_method}</span>
           </div>
+          <div className="flex justify-between text-sm">
+            <span className="text-muted-foreground">Payment status:</span>
+            <span className="font-medium">{order.payment_status || 'Awaiting verification'}</span>
+          </div>
+          {order.status_updated_at && (
+            <div className="flex justify-between gap-4 text-sm">
+              <span className="text-muted-foreground">Last status change:</span>
+              <span className="text-right font-medium">
+                {order.status_admin?.name || 'Administrator'} · {formatDate(order.status_updated_at)}
+              </span>
+            </div>
+          )}
           {order.transaction_id && (
             <div className="flex justify-between text-sm">
               <span className="text-muted-foreground">Transaction ID:</span>
@@ -208,6 +234,34 @@ const OrderCard = ({ order, onStatusChange, isAdmin = false }) => {
       {/* Admin status update */}
       {isAdmin && onStatusChange && (
         <div className="px-5 py-4 border-t border-border bg-muted/10">
+          {order.payment_status !== 'Verified' && order.order_status !== 'Cancelled' && onVerifyPayment && (
+            <div className="mb-4">
+              <label className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-2 block">
+                Enter the transaction ID from the payment SMS
+              </label>
+              <div className="flex gap-2">
+                <input
+                  value={verificationId}
+                  onChange={(event) => setVerificationId(event.target.value.replace(/\s+/g, ''))}
+                  inputMode="numeric"
+                  maxLength={order.payment_method === 'MTN MoMo' ? 11 : 12}
+                  placeholder={order.payment_method === 'MTN MoMo' ? '11 digits' : '12 digits'}
+                  className="flex-1 min-w-0 px-3 py-2 bg-background border border-border rounded-lg text-sm font-mono"
+                />
+                <button
+                  type="button"
+                  onClick={handleVerifyPayment}
+                  disabled={updating || verificationId.length !== (order.payment_method === 'MTN MoMo' ? 11 : 12)}
+                  className="px-3 py-2 rounded-lg bg-primary text-primary-foreground text-sm disabled:opacity-50"
+                >
+                  Verify
+                </button>
+              </div>
+              <p className="text-xs text-muted-foreground mt-1">
+                This must exactly match the ID received in the business payment SMS.
+              </p>
+            </div>
+          )}
           <label className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-2 block">
             Update status
           </label>
@@ -217,7 +271,9 @@ const OrderCard = ({ order, onStatusChange, isAdmin = false }) => {
             disabled={updating}
             className="w-full px-3 py-2 bg-background border border-border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary disabled:opacity-50"
           >
-            {STATUS_OPTIONS.map((s) => (
+            {STATUS_OPTIONS.filter((status) =>
+              order.payment_status === 'Verified' || status === 'Pending' || status === 'Cancelled'
+            ).map((s) => (
               <option key={s} value={s}>{s}</option>
             ))}
           </select>

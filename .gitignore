@@ -6,6 +6,28 @@ node_modules/
 .env.local
 .env.*
 
+# Private keys, certificates, package-manager credentials
+*.pem
+*.key
+*.p12
+*.pfx
+*.jks
+*.keystore
+.npmrc
+.pypirc
+
+# Cloud/service credential exports
+credentials*.json
+service-account*.json
+*service-account-key*.json
+
+# Internal audit and remediation reports
+WEAURA_STATUS.md
+SUPABASE_REMEDIATION.md
+
+# Local Supabase CLI project state
+supabase/.temp/
+
 # PocketBase database files - contains user data
 apps/pocketbase/pb_data/data.db
 apps/pocketbase/pb_data/data.db-wal
@@ -13,6 +35,17 @@ apps/pocketbase/pb_data/data.db-shm
 apps/pocketbase/pb_data/auxiliary.db
 apps/pocketbase/pb_data/auxiliary.db-wal
 apps/pocketbase/pb_data/auxiliary.db-shm
+
+# Root-level PocketBase data (contains local user/application data)
+pb_data/*.db
+pb_data/*.db-wal
+pb_data/*.db-shm
+
+# Other local database formats
+*.sqlite
+*.sqlite3
+*.sqlite-wal
+*.sqlite-shm
 
 # PocketBase binary executable
 apps/pocketbase/pocketbase

@@ -30,17 +30,22 @@ const ProductDetailPage = () => {
     const fetchProduct = async () => {
       try {
         setLoading(true);
-        const productData = await pb.collection('products').getOne(id, {
-          expand: 'reviews',
-          $autoCancel: false
-        });
+        const { data: productData, error: productError } = await supabase
+          .from('products')
+          .select('*, reviews(*)')
+          .eq('id', id)
+          .single();
+        if (productError) throw productError;
         setProduct(productData);
 
-        const related = await pb.collection('products').getList(1, 4, {
-          filter: `category = "${productData.category}" && id != "${id}"`,
-          $autoCancel: false
-        });
-        setRelatedProducts(related.items);
+        const { data: related, error: relatedError } = await supabase
+          .from('products')
+          .select('*')
+          .eq('category', productData.category)
+          .neq('id', id)
+          .limit(4);
+        if (relatedError) throw relatedError;
+        setRelatedProducts(related || []);
       } catch (error) {
         console.error('Error fetching product:', error);
         toast.error('Failed to load product');
@@ -53,13 +58,10 @@ const ProductDetailPage = () => {
   }, [id]);
 
   const handleAddToCart = async () => {
-    if (!pb.authStore.isValid) {
-      toast.error('Please log in to add items to cart');
-      return;
-    }
-
     try {
-      await addToCart(product.id, quantity, selectedSize, selectedColor);
+      if (sizes.length > 0 && !selectedSize) return toast.error('Please select a size');
+      if (colors.length > 0 && !selectedColor) return toast.error('Please select a color');
+      addToCart(product, quantity, selectedSize || null, selectedColor || null);
       toast.success('Added to cart');
     } catch (error) {
       toast.error(error.message || 'Failed to add to cart');
@@ -67,11 +69,6 @@ const ProductDetailPage = () => {
   };
 
   const handleToggleWishlist = async () => {
-    if (!pb.authStore.isValid) {
-      toast.error('Please log in to save items');
-      return;
-    }
-
     try {
       if (isInWishlist(product.id)) {
         const itemId = getWishlistItemId(product.id);
@@ -119,11 +116,11 @@ const ProductDetailPage = () => {
   }
 
   const images = product.images && product.images.length > 0
-    ? product.images.map(img => pb.files.getUrl(product, img))
+    ? product.images
     : ['https://images.unsplash.com/photo-1523381210434-271e8be1f52b'];
 
-  const sizes = product.sizes ? product.sizes.split(',').map(s => s.trim()) : [];
-  const colors = product.colors ? product.colors.split(',').map(c => c.trim()) : [];
+  const sizes = Array.isArray(product.sizes) ? product.sizes : [];
+  const colors = Array.isArray(product.colors) ? product.colors : [];
 
   return (
     <>
@@ -192,20 +189,20 @@ const ProductDetailPage = () => {
                         />
                       ))}
                     </div>
-                    <span className="text-sm font-medium">{product.rating.toFixed(1)}</span>
+                    <span className="text-sm font-medium">{Number(product.rating).toFixed(1)}</span>
                     <span className="text-sm text-muted-foreground">
-                      ({product.expand?.reviews?.length || 0} reviews)
+                      ({product.reviews?.length || 0} reviews)
                     </span>
                   </div>
                 )}
 
                 <div className="flex items-baseline gap-3 mb-6">
                   <span className="text-4xl font-bold text-primary">
-                    ${product.price.toFixed(2)}
+                    UGX {Number(product.price).toLocaleString()}
                   </span>
                   {product.original_price && product.original_price > product.price && (
                     <span className="text-xl text-muted-foreground line-through">
-                      ${product.original_price.toFixed(2)}
+                      UGX {Number(product.original_price).toLocaleString()}
                     </span>
                   )}
                 </div>
@@ -275,7 +272,7 @@ const ProductDetailPage = () => {
                       </button>
                     </div>
                     <span className="text-sm text-muted-foreground">
-                      {product.stock_quantity} available
+                      {product.stock} piece{product.stock === 1 ? '' : 's'} available
                     </span>
                   </div>
                 </div>
@@ -283,7 +280,7 @@ const ProductDetailPage = () => {
                 <div className="flex gap-4 mb-8">
                   <Button
                     onClick={handleAddToCart}
-                    disabled={product.stock_quantity === 0}
+                    disabled={product.stock === 0}
                     className="flex-1 bg-primary hover:bg-primary/90 text-primary-foreground py-6 text-lg"
                   >
                     <ShoppingCart className="w-5 h-5 mr-2" />
@@ -318,11 +315,11 @@ const ProductDetailPage = () => {
               </div>
             </div>
 
-            {product.expand?.reviews && product.expand.reviews.length > 0 && (
+            {product.reviews && product.reviews.length > 0 && (
               <section className="mb-20">
                 <h2 className="text-3xl font-bold mb-8">Customer reviews</h2>
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                  {product.expand.reviews.map((review) => (
+                  {product.reviews.map((review) => (
                     <ReviewCard key={review.id} review={review} />
                   ))}
                 </div>

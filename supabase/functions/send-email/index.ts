@@ -7,15 +7,44 @@
 //   supabase secrets set WEAURA_ADMIN_EMAIL=admin@weaura.ug
 
 import { serve } from 'https://deno.land/std@0.168.0/http/server.ts';
+import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 
 const RESEND_API_KEY = Deno.env.get('RESEND_API_KEY')!;
 const FROM_EMAIL = Deno.env.get('WEAURA_FROM_EMAIL') || 'orders@weaura.ug';
 const ADMIN_EMAIL = Deno.env.get('WEAURA_ADMIN_EMAIL') || 'admin@weaura.ug';
+const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!;
+const SUPABASE_ANON_KEY = Deno.env.get('SUPABASE_ANON_KEY')!;
+const SERVICE_ROLE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
 };
+
+const escapeHtml = (value: unknown) => String(value ?? '')
+  .replaceAll('&', '&amp;')
+  .replaceAll('<', '&lt;')
+  .replaceAll('>', '&gt;')
+  .replaceAll('"', '&quot;')
+  .replaceAll("'", '&#039;');
+
+const sanitizeOrder = (order: any) => ({
+  ...order,
+  customer_name: escapeHtml(order?.customer_name),
+  customer_phone: escapeHtml(order?.customer_phone),
+  customer_email: order?.customer_email ? escapeHtml(order.customer_email) : null,
+  customer_address: escapeHtml(order?.customer_address),
+  delivery_zone: order?.delivery_zone ? escapeHtml(order.delivery_zone) : null,
+  payment_method: escapeHtml(order?.payment_method),
+  transaction_id: escapeHtml(order?.transaction_id),
+  order_status: escapeHtml(order?.order_status),
+  items: Array.isArray(order?.items) ? order.items.map((item: any) => ({
+    ...item,
+    product_name: escapeHtml(item.product_name),
+    size: item.size ? escapeHtml(item.size) : null,
+    color: item.color ? escapeHtml(item.color) : null,
+  })) : [],
+});
 
 // ── Email HTML templates ──────────────────────────────────────
 
@@ -215,6 +244,20 @@ const adminNewOrderEmailHtml = (order: any) => `
 </html>
 `;
 
+const lowStockEmailHtml = (product: any) => `
+<!DOCTYPE html>
+<html>
+<body style="font-family:-apple-system,sans-serif;background:#f5f5f5;margin:0;padding:20px">
+  <div style="max-width:560px;margin:0 auto;background:#fff;border-radius:12px;padding:32px">
+    <h1 style="margin-top:0;color:#b45309">Low inventory alert</h1>
+    <p><strong>${escapeHtml(product.name)}</strong> now has
+      <strong>${Number(product.stock)} piece(s)</strong> remaining.</p>
+    <p>Category: ${escapeHtml(product.category || 'Uncategorized')}</p>
+    <p style="color:#666">Restock or review this item in the Weaura admin inventory dashboard.</p>
+  </div>
+</body>
+</html>`;
+
 // ── Send email via Resend ─────────────────────────────────────
 const sendEmail = async (to: string, subject: string, html: string) => {
   const res = await fetch('https://api.resend.com/emails', {
@@ -232,6 +275,21 @@ const sendEmail = async (to: string, subject: string, html: string) => {
   return res.json();
 };
 
+const isAuthorizedCaller = async (req: Request) => {
+  const authorization = req.headers.get('Authorization');
+  if (!authorization) return false;
+  if (authorization === `Bearer ${SERVICE_ROLE_KEY}`) return true;
+
+  const client = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
+    global: { headers: { Authorization: authorization } },
+    auth: { persistSession: false, autoRefreshToken: false },
+  });
+  const { data: { user } } = await client.auth.getUser();
+  if (!user) return false;
+  const { data: profile } = await client.from('users').select('role').eq('id', user.id).single();
+  return profile?.role === 'admin';
+};
+
 // ── Main handler ──────────────────────────────────────────────
 serve(async (req) => {
   if (req.method === 'OPTIONS') {
@@ -239,35 +297,62 @@ serve(async (req) => {
   }
 
   try {
-    const { type, order, newStatus } = await req.json();
+    if (!await isAuthorizedCaller(req)) {
+      return new Response(
+        JSON.stringify({ error: 'Admin or service-role access required' }),
+        { status: 403, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      );
+    }
+
+    const payload = await req.json();
+    const type = payload.type;
+    const order = sanitizeOrder(payload.order);
+    const newStatus = escapeHtml(payload.newStatus);
+    const product = payload.product;
 
     switch (type) {
 
-      // Called when customer places an order
+      // Called after an administrator verifies payment.
       case 'order_receipt': {
-        const promises = [];
-
-        // Send receipt to customer (if they gave email)
         if (order.customer_email) {
-          promises.push(
-            sendEmail(
-              order.customer_email,
-              `Your Weaura order #${order.id.slice(0, 8).toUpperCase()} is confirmed`,
-              receiptEmailHtml(order)
-            )
+          await sendEmail(
+            order.customer_email,
+            `Your Weaura order #${order.id.slice(0, 8).toUpperCase()} is confirmed`,
+            receiptEmailHtml(order)
           );
         }
+        break;
+      }
 
-        // Always notify admin of new order
-        promises.push(
-          sendEmail(
-            ADMIN_EMAIL,
-            `New order #${order.id.slice(0, 8).toUpperCase()} — ${order.customer_name}`,
-            adminNewOrderEmailHtml(order)
-          )
+      // Called by trusted order creation code while payment awaits review.
+      case 'new_order': {
+        await sendEmail(
+          ADMIN_EMAIL,
+          `New order awaiting payment verification #${order.id.slice(0, 8).toUpperCase()} — ${order.customer_name}`,
+          adminNewOrderEmailHtml(order)
         );
+        break;
+      }
 
-        await Promise.all(promises);
+      case 'low_stock': {
+        if (!product?.id || !product?.name || !Number.isFinite(Number(product.stock))) {
+          throw new Error('Invalid low-stock payload');
+        }
+        const serviceClient = createClient(SUPABASE_URL, SERVICE_ROLE_KEY, {
+          auth: { persistSession: false, autoRefreshToken: false },
+        });
+        const { data: admins, error: adminsError } = await serviceClient
+          .from('users')
+          .select('email')
+          .eq('role', 'admin');
+        if (adminsError) throw adminsError;
+        const recipients = [...new Set((admins || []).map((admin) => admin.email).filter(Boolean))];
+        if (recipients.length === 0) throw new Error('No admin email recipients configured');
+        await Promise.all(recipients.map((email) => sendEmail(
+          email,
+          `Low inventory: ${product.name} — ${Number(product.stock)} left`,
+          lowStockEmailHtml(product)
+        )));
         break;
       }
 

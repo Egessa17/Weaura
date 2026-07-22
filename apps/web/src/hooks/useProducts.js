@@ -18,8 +18,9 @@ export const useProducts = (filters = {}) => {
       }
 
       if (filters.search) {
+        const safeSearch = filters.search.trim().replace(/[,%()]/g, ' ');
         query = query.or(
-          'name.ilike.%s{filters.search}%,decription.ilike.%{filters.search}%'
+          `name.ilike.%${safeSearch}%,description.ilike.%${safeSearch}%`
         );
       }
 
@@ -27,12 +28,20 @@ export const useProducts = (filters = {}) => {
         query = query.gte('price', filters.minPrice);
       }
 
-      if (filters.maxprice !== undefined) {
-        query = query.lte('price', filters.maxprice);
+      if (filters.maxPrice !== undefined) {
+        query = query.lte('price', filters.maxPrice);
       }
 
       if (filters.minRating) {
         query = query.gte('rating', filters.minRating);
+      }
+
+      if (filters.size) {
+        query = query.contains('sizes', [filters.size]);
+      }
+
+      if (filters.color) {
+        query = query.contains('colors', [filters.color]);
       }
 
       const sortMap = {
@@ -88,6 +97,8 @@ export const useProducts = (filters = {}) => {
     filters.minPrice,
     filters.maxPrice,
     filters.minRating,
+    filters.size,
+    filters.color,
     filters.sort,
   ]);
 

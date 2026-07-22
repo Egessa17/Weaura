@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { Helmet } from 'react-helmet';
 import {
   DollarSign, Users, TrendingUp, Package,
-  Plus, LogOut, X, Edit, Trash2, Upload
+  Plus, LogOut, X, Edit, Trash2, Upload, History
 } from 'lucide-react';
 import Header from '@/components/Header.jsx';
 import Footer from '@/components/Footer.jsx';
@@ -163,7 +163,11 @@ const ProductModal = ({ product, onClose, onSaved }) => {
                 onChange={handleChange('stock')}
                 placeholder="e.g. 20"
                 className="mt-2 bg-background"
+                disabled={!!product}
               />
+              {product && (
+                <p className="text-xs text-muted-foreground mt-1">Use the Inventory tab to change stock.</p>
+              )}
             </div>
           </div>
 
@@ -284,18 +288,63 @@ const ProductModal = ({ product, onClose, onSaved }) => {
 
 // ── Main AdminDashboard ───────────────────────────────────────
 const AdminDashboard = () => {
-  const { orders, loading: ordersLoading, fetchAllOrders, updateOrderStatus, stats } = useOrders();
-  const { adminLogout } = useAdminAuth();
+  const { orders, loading: ordersLoading, fetchAllOrders, updateOrderStatus, verifyPayment, stats } = useOrders();
+  const { adminUser, adminLogout } = useAdminAuth();
 
   const [products, setProducts] = useState([]);
   const [productsLoading, setProductsLoading] = useState(true);
   const [modalOpen, setModalOpen] = useState(false);
   const [editingProduct, setEditingProduct] = useState(null);
+  const [auditLogs, setAuditLogs] = useState([]);
+  const [auditLoading, setAuditLoading] = useState(true);
+  const [inventoryMovements, setInventoryMovements] = useState([]);
+  const [inventoryLoading, setInventoryLoading] = useState(true);
+  const [adjustingProductId, setAdjustingProductId] = useState(null);
+  const [quantityChange, setQuantityChange] = useState('');
+  const [adjustmentReason, setAdjustmentReason] = useState('');
 
   useEffect(() => {
     fetchAllOrders();
     fetchProducts();
+    fetchAuditLogs();
+    fetchInventoryMovements();
   }, []);
+
+  const fetchInventoryMovements = async () => {
+    try {
+      setInventoryLoading(true);
+      const { data, error } = await supabase
+        .from('inventory_movements')
+        .select('*')
+        .order('created_at', { ascending: false })
+        .limit(200);
+      if (error) throw error;
+      setInventoryMovements(data || []);
+    } catch (error) {
+      console.error('Error fetching inventory movements:', error);
+      toast.error('Failed to load inventory history');
+    } finally {
+      setInventoryLoading(false);
+    }
+  };
+
+  const fetchAuditLogs = async () => {
+    try {
+      setAuditLoading(true);
+      const { data, error } = await supabase
+        .from('admin_audit_logs')
+        .select('*')
+        .order('created_at', { ascending: false })
+        .limit(200);
+      if (error) throw error;
+      setAuditLogs(data || []);
+    } catch (error) {
+      console.error('Error fetching audit logs:', error);
+      toast.error('Failed to load admin activity');
+    } finally {
+      setAuditLoading(false);
+    }
+  };
 
   const fetchProducts = async () => {
     try {
@@ -318,8 +367,28 @@ const AdminDashboard = () => {
     try {
       await updateOrderStatus(orderId, newStatus);
       toast.success('Order status updated');
+      fetchAllOrders();
+      fetchAuditLogs();
     } catch {
       toast.error('Failed to update order status');
+    }
+  };
+
+  const handleVerifyPayment = async (orderId, paymentMethod, transactionId) => {
+    try {
+      const result = await verifyPayment(orderId, paymentMethod, transactionId);
+      if (!result.order.customer_email) {
+        toast.success('Payment verified; no customer email was supplied');
+      } else if (result.customer_email_sent) {
+        toast.success('Payment verified and customer confirmation sent');
+      } else {
+        toast.warning('Payment verified, but the customer email failed');
+      }
+      fetchProducts();
+      fetchAllOrders();
+      fetchAuditLogs();
+    } catch (error) {
+      toast.error(error.message || 'Payment verification failed');
     }
   };
 
@@ -333,8 +402,58 @@ const AdminDashboard = () => {
       if (error) throw error;
       toast.success('Product deleted');
       fetchProducts();
+      fetchAuditLogs();
     } catch {
       toast.error('Failed to delete product');
+    }
+  };
+
+  const handleInventoryAdjustment = async (product) => {
+    const change = Number(quantityChange);
+    if (!Number.isInteger(change) || change === 0) {
+      return toast.error('Enter a whole-number adjustment such as 10 or -2');
+    }
+    if (adjustmentReason.trim().length < 3) {
+      return toast.error('Enter a reason for this inventory change');
+    }
+
+    setAdjustingProductId(product.id);
+    try {
+      const { data, error } = await supabase.rpc('adjust_inventory', {
+        p_product_id: product.id,
+        p_quantity_change: change,
+        p_reason: adjustmentReason.trim(),
+      });
+      if (error) throw error;
+
+      if (data?.alert_needed) {
+        const { error: emailError } = await supabase.functions.invoke('send-email', {
+          body: { type: 'low_stock', product: data.product },
+        });
+        if (emailError) {
+          toast.warning('Inventory updated, but low-stock email delivery failed');
+        } else {
+          toast.warning(`Low-stock emails sent: ${data.product.stock} pieces remaining`);
+        }
+      } else {
+        toast.success('Inventory updated');
+      }
+
+      setQuantityChange('');
+      setAdjustmentReason('');
+      await Promise.all([fetchProducts(), fetchInventoryMovements(), fetchAuditLogs()]);
+    } catch (error) {
+      toast.error(error.message || 'Failed to update inventory');
+    } finally {
+      setAdjustingProductId(null);
+    }
+  };
+
+  const beginInventoryAdjustment = (productId) => {
+    if (adjustingProductId !== productId) {
+      setQuantityChange('');
+      setAdjustmentReason('');
+      setAdjustingProductId(productId);
     }
   };
 
@@ -385,6 +504,13 @@ const AdminDashboard = () => {
     },
   ];
 
+  const inventoryByCategory = products.reduce((groups, product) => {
+    const category = product.category || 'Uncategorized';
+    if (!groups[category]) groups[category] = [];
+    groups[category].push(product);
+    return groups;
+  }, {});
+
   return (
     <>
       <Helmet>
@@ -396,7 +522,10 @@ const AdminDashboard = () => {
         <ProductModal
           product={editingProduct}
           onClose={handleModalClose}
-          onSaved={fetchProducts}
+          onSaved={() => {
+            fetchProducts();
+            fetchAuditLogs();
+          }}
         />
       )}
 
@@ -411,6 +540,9 @@ const AdminDashboard = () => {
               <h1 className="text-4xl md:text-5xl font-bold" style={{ letterSpacing: '-0.02em' }}>
                 Admin dashboard
               </h1>
+              <p className="text-lg font-medium text-muted-foreground ml-4 mr-auto">
+                Welcome, {adminUser?.name || 'Administrator'}
+              </p>
               <Button
                 variant="outline"
                 onClick={handleLogout}
@@ -438,9 +570,15 @@ const AdminDashboard = () => {
             </div>
 
             <Tabs defaultValue="orders" className="space-y-8">
-              <TabsList className="grid w-full grid-cols-2 lg:w-auto lg:inline-grid">
+              <TabsList className="grid w-full grid-cols-4 lg:w-auto lg:inline-grid">
                 <TabsTrigger value="orders">Orders</TabsTrigger>
                 <TabsTrigger value="products">Products</TabsTrigger>
+                <TabsTrigger value="inventory">
+                  Inventory{products.filter((product) => product.stock <= 15).length > 0
+                    ? ` (${products.filter((product) => product.stock <= 15).length} low)`
+                    : ''}
+                </TabsTrigger>
+                <TabsTrigger value="activity">Activity</TabsTrigger>
               </TabsList>
 
               {/* ── Orders tab ── */}
@@ -474,6 +612,7 @@ const AdminDashboard = () => {
                         order={order}
                         isAdmin={true}
                         onStatusChange={handleStatusChange}
+                        onVerifyPayment={handleVerifyPayment}
                       />
                     ))}
                   </div>
@@ -590,6 +729,148 @@ const AdminDashboard = () => {
                             <Trash2 className="w-3.5 h-3.5" />
                             Delete
                           </Button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </TabsContent>
+
+              <TabsContent value="inventory" className="space-y-8">
+                <div>
+                  <h2 className="text-2xl font-semibold">Inventory</h2>
+                  <p className="text-muted-foreground mt-1">
+                    Stock at or below 15 pieces is highlighted. Positive adjustments add stock; negative adjustments remove stock.
+                  </p>
+                </div>
+
+                {Object.entries(inventoryByCategory).map(([category, categoryProducts]) => (
+                  <section key={category} className="space-y-3">
+                    <h3 className="text-xl font-semibold">{category}</h3>
+                    <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
+                      {categoryProducts.map((product) => {
+                        const lowStock = product.stock <= 15;
+                        return (
+                          <div
+                            key={product.id}
+                            className={`rounded-xl border p-5 ${lowStock ? 'border-amber-500 bg-amber-50' : 'border-border bg-card'}`}
+                          >
+                            <div className="flex items-start justify-between gap-4 mb-4">
+                              <div>
+                                <h4 className="font-semibold">{product.name}</h4>
+                                <p className="text-sm text-muted-foreground">UGX {Number(product.price).toLocaleString()}</p>
+                              </div>
+                              <div className={`text-right ${lowStock ? 'text-amber-700' : ''}`}>
+                                <p className="text-2xl font-bold">{product.stock}</p>
+                                <p className="text-xs font-medium">pieces available</p>
+                                {lowStock && <p className="text-xs font-semibold mt-1">LOW STOCK</p>}
+                              </div>
+                            </div>
+                            <div className="grid grid-cols-1 sm:grid-cols-[110px_1fr_auto] gap-2">
+                              <Input
+                                type="number"
+                                step="1"
+                                value={adjustingProductId === product.id ? quantityChange : ''}
+                                onFocus={() => beginInventoryAdjustment(product.id)}
+                                onChange={(event) => {
+                                  if (adjustingProductId !== product.id) setAdjustmentReason('');
+                                  setAdjustingProductId(product.id);
+                                  setQuantityChange(event.target.value);
+                                }}
+                                placeholder="+10 / -2"
+                                className="bg-background"
+                              />
+                              <Input
+                                value={adjustingProductId === product.id ? adjustmentReason : ''}
+                                onFocus={() => beginInventoryAdjustment(product.id)}
+                                onChange={(event) => {
+                                  if (adjustingProductId !== product.id) setQuantityChange('');
+                                  setAdjustingProductId(product.id);
+                                  setAdjustmentReason(event.target.value);
+                                }}
+                                placeholder="Reason: restock, damage, correction..."
+                                className="bg-background"
+                              />
+                              <Button
+                                onClick={() => handleInventoryAdjustment(product)}
+                                disabled={
+                                  adjustingProductId !== product.id
+                                  || !quantityChange
+                                  || adjustmentReason.trim().length < 3
+                                }
+                              >
+                                Apply
+                              </Button>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </section>
+                ))}
+
+                <section className="space-y-3">
+                  <div className="flex items-center justify-between">
+                    <h3 className="text-xl font-semibold">Recent inventory movements</h3>
+                    <Button variant="outline" onClick={fetchInventoryMovements}>Refresh</Button>
+                  </div>
+                  {inventoryLoading ? (
+                    <p className="text-muted-foreground">Loading inventory history...</p>
+                  ) : inventoryMovements.length === 0 ? (
+                    <p className="text-muted-foreground">No inventory movements recorded yet.</p>
+                  ) : (
+                    <div className="bg-card rounded-xl border border-border divide-y divide-border overflow-hidden">
+                      {inventoryMovements.map((movement) => (
+                        <div key={movement.id} className="p-4 grid grid-cols-1 md:grid-cols-[1fr_auto_auto] gap-2 md:gap-6">
+                          <div>
+                            <p className="font-semibold">{movement.product_name}</p>
+                            <p className="text-sm text-muted-foreground">
+                              {movement.reason} · {movement.admin_name}
+                            </p>
+                          </div>
+                          <p className={`font-bold ${movement.quantity_change > 0 ? 'text-green-600' : 'text-red-600'}`}>
+                            {movement.quantity_change > 0 ? '+' : ''}{movement.quantity_change} ({movement.before_quantity} → {movement.after_quantity})
+                          </p>
+                          <p className="text-sm text-muted-foreground md:text-right">
+                            {new Date(movement.created_at).toLocaleString('en-UG')}
+                          </p>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </section>
+              </TabsContent>
+
+              <TabsContent value="activity" className="space-y-6">
+                <div className="flex items-center justify-between">
+                  <h2 className="text-2xl font-semibold">Admin activity</h2>
+                  <Button variant="outline" onClick={fetchAuditLogs}>Refresh</Button>
+                </div>
+                {auditLoading ? (
+                  <p className="text-muted-foreground">Loading activity...</p>
+                ) : auditLogs.length === 0 ? (
+                  <div className="text-center py-16 bg-card rounded-2xl border border-border">
+                    <History className="w-12 h-12 text-muted-foreground mx-auto mb-3" />
+                    <p className="text-muted-foreground">No admin activity recorded yet</p>
+                  </div>
+                ) : (
+                  <div className="bg-card rounded-2xl border border-border divide-y divide-border overflow-hidden">
+                    {auditLogs.map((log) => (
+                      <div key={log.id} className="p-4 flex flex-col md:flex-row md:items-center gap-2 md:gap-4">
+                        <div className="md:w-44 flex-shrink-0">
+                          <p className="font-semibold">{log.admin_name}</p>
+                          <p className="text-xs text-muted-foreground">
+                            {new Date(log.created_at).toLocaleString('en-UG')}
+                          </p>
+                        </div>
+                        <div className="flex-1">
+                          <p className="font-medium">{log.action.replaceAll('_', ' ')}</p>
+                          <p className="text-sm text-muted-foreground">
+                            {log.entity_type}{log.entity_id ? ` #${log.entity_id.slice(0, 8)}` : ''}
+                            {log.details?.from || log.details?.to
+                              ? ` · ${log.details?.from || '—'} → ${log.details?.to || '—'}`
+                              : ''}
+                          </p>
                         </div>
                       </div>
                     ))}

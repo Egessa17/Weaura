@@ -49,7 +49,7 @@ export const useCart = () => {
       return [
         ...prev,
         {
-          id: '${product.id}-${size}-${color}-${Date.now()}',
+          id: `${product.id}-${size}-${color}-${Date.now()}`,
           product_id: product.id,
           product,
           quantity,

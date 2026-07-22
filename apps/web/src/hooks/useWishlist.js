@@ -1,86 +1,43 @@
-import { useState, useEffect } from 'react';
-import { supabase } from '@/lib/supabaseClient';
+import { useEffect, useState } from 'react';
+
+const WISHLIST_KEY = 'weaura_wishlist';
+const WISHLIST_EVENT = 'weaura:wishlist-changed';
+
+const loadWishlist = () => {
+  try {
+    const value = JSON.parse(localStorage.getItem(WISHLIST_KEY) || '[]');
+    return Array.isArray(value) ? value : [];
+  } catch {
+    return [];
+  }
+};
+
+const saveWishlist = (items) => {
+  localStorage.setItem(WISHLIST_KEY, JSON.stringify(items));
+  window.dispatchEvent(new CustomEvent(WISHLIST_EVENT, { detail: items }));
+};
 
 export const useWishlist = () => {
-  const [wishlistItems, setWishlistItems] = useState([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState(null);
-
-  const getCurrentUserId = async () => {
-    const { data: { session } } = await supabase.auth.getSession();
-    return session?.user?.id || null;
-  };
-
-  const fetchWishlist = async () => {
-    const userId = await getCurrentUserId();
-    if (!userId) {
-      setWishlistItems([]);
-      setLoading(false);
-      return;
-    }
-
-    try {
-      setLoading(true);
-      const { data, error: fetchError } = await supabase
-        .from('wishlist')
-        .select('*, product:products(*)')
-        .eq('user_id', userId);
-      if (fetchError) throw fetchError;
-      setWishlistItems(data || []);
-      setError(null);
-    } catch (err) {
-      setError(err.message);
-      console.error('Error fetching wishlist:', err);
-    } finally {
-      setLoading(false);
-    }
-  };
+  const [wishlistItems, setWishlistItems] = useState(loadWishlist);
 
   useEffect(() => {
-    fetchWishlist();
-    const { data: { subscription } } = supabase.auth.onAuthStateChange(() => {
-      fetchWishlist();
-    });
-    return () => subscription.unsubscribe();
+    const handleChange = (event) => setWishlistItems(event.detail || loadWishlist());
+    window.addEventListener(WISHLIST_EVENT, handleChange);
+    return () => window.removeEventListener(WISHLIST_EVENT, handleChange);
   }, []);
 
   const addToWishlist = async (productId) => {
-    const userId = await getCurrentUserId();
-    if (!userId) throw new Error('Please log in to add items to wishlist');
-
-    try {
-      const { data: existing } = await supabase
-        .from('wishlist')
-        .select('id')
-        .eq('user_id', userId)
-        .eq('product_id', productId)
-        .single();
-
-      if (!existing) {
-        const { error: insertError } = await supabase
-          .from('wishlist')
-          .insert({ user_id: userId, product_id: productId });
-        if (insertError) throw insertError;
-        await fetchWishlist();
-      }
-    } catch (err) {
-      setError(err.message);
-      throw err;
-    }
+    const current = loadWishlist();
+    if (current.some((item) => item.product_id === productId)) return;
+    const next = [...current, { id: productId, product_id: productId }];
+    saveWishlist(next);
+    setWishlistItems(next);
   };
 
   const removeFromWishlist = async (wishlistItemId) => {
-    try {
-      const { error: deleteError } = await supabase
-        .from('wishlist')
-        .delete()
-        .eq('id', wishlistItemId);
-      if (deleteError) throw deleteError;
-      await fetchWishlist();
-    } catch (err) {
-      setError(err.message);
-      throw err;
-    }
+    const next = loadWishlist().filter((item) => item.id !== wishlistItemId);
+    saveWishlist(next);
+    setWishlistItems(next);
   };
 
   const isInWishlist = (productId) =>
@@ -91,12 +48,13 @@ export const useWishlist = () => {
 
   return {
     wishlistItems,
-    loading,
-    error,
+    loading: false,
+    error: null,
     addToWishlist,
     removeFromWishlist,
-    fetchWishlist,
+    fetchWishlist: () => setWishlistItems(loadWishlist()),
     isInWishlist,
     getWishlistItemId,
   };
 };
+

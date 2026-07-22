@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import { Heart, ShoppingCart, Star } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { useCart } from '@/hooks/useCart';
@@ -7,6 +7,7 @@ import { useWishlist } from '@/hooks/useWishlist';
 import { toast } from 'sonner';
 
 const ProductCard = ({ product }) => {
+  const navigate = useNavigate();
   const { addToCart } = useCart();
   const { isInWishlist, addToWishlist, removeFromWishlist, getWishlistItemId } = useWishlist();
   const [isAddingToCart, setIsAddingToCart] = useState(false);
@@ -26,6 +27,11 @@ const ProductCard = ({ product }) => {
 
     setIsAddingToCart(true);
     try {
+      if ((product.sizes?.length || 0) > 0 || (product.colors?.length || 0) > 0) {
+        toast.error('Please select size and color too before adding this item to cart');
+        navigate(`/product/${product.id}`);
+        return;
+      }
       // Pass full product object — useCart stores it in localStorage
       addToCart(product, 1);
       toast.success('Added to cart');
@@ -87,9 +93,9 @@ const ProductCard = ({ product }) => {
               }`}
             />
           </button>
-          {product.stock > 0 && product.stock < 10 && (
+          {product.stock > 0 && product.stock <= 10 && (
             <div className="absolute bottom-4 left-4 bg-destructive/90 text-destructive-foreground px-3 py-1 rounded-full text-sm font-medium">
-              Only {product.stock} left
+              Only {product.stock} piece{product.stock === 1 ? '' : 's'} left
             </div>
           )}
           {product.stock === 0 && (
@@ -135,7 +141,7 @@ const ProductCard = ({ product }) => {
               className="w-full bg-primary hover:bg-primary/90 text-primary-foreground transition-all duration-200 active:scale-98"
             >
               <ShoppingCart className="w-4 h-4 mr-2" />
-              {isAddingToCart ? 'Adding...' : 'Add to Cart'}
+              {isAddingToCart ? 'Adding...' : (product.sizes?.length || product.colors?.length) ? 'Select options' : 'Add to Cart'}
             </Button>
           </div>
         </div>

@@ -34,9 +34,9 @@ const ProductFilter = ({ filters, onFilterChange }) => {
         <div className="space-y-4">
           <Slider
             min={0}
-            max={200}
-            step={10}
-            value={[filters.minPrice || 0, filters.maxPrice || 200]}
+            max={200000}
+            step={5000}
+            value={[filters.minPrice || 0, filters.maxPrice || 200000]}
             onValueChange={(value) => {
               onFilterChange('minPrice', value[0]);
               onFilterChange('maxPrice', value[1]);
@@ -44,8 +44,8 @@ const ProductFilter = ({ filters, onFilterChange }) => {
             className="w-full"
           />
           <div className="flex justify-between text-sm text-muted-foreground">
-            <span>${filters.minPrice || 0}</span>
-            <span>${filters.maxPrice || 200}</span>
+            <span>UGX {Number(filters.minPrice || 0).toLocaleString()}</span>
+            <span>UGX {Number(filters.maxPrice || 200000).toLocaleString()}</span>
           </div>
         </div>
       </div>

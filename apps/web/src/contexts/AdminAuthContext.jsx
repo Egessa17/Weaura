@@ -34,12 +34,12 @@ export const AdminAuthProvider = ({ children }) => {
     try {
       const { data: profile } = await supabase
         .from('users')
-        .select('role')
+        .select('role, name')
         .eq('id', user.id)
         .single();
 
       if (profile?.role === 'admin') {
-        setAdminUser({ ...user, role: 'admin' });
+        setAdminUser({ ...user, role: 'admin', name: profile.name });
       } else {
         await supabase.auth.signOut();
         setAdminUser(null);
@@ -57,7 +57,7 @@ export const AdminAuthProvider = ({ children }) => {
 
     const { data: profile } = await supabase
       .from('users')
-      .select('role')
+      .select('role, name')
       .eq('id', data.user.id)
       .single();
 
@@ -66,10 +66,13 @@ export const AdminAuthProvider = ({ children }) => {
       throw new Error('Access denied. Admin credentials required.');
     }
 
+    setAdminUser({ ...data.user, role: 'admin', name: profile.name });
+    await supabase.rpc('log_admin_session_event', { p_action: 'admin_login' });
     return data.user;
   };
 
   const adminLogout = async () => {
+    await supabase.rpc('log_admin_session_event', { p_action: 'admin_logout' });
     await supabase.auth.signOut();
     setAdminUser(null);
   };
